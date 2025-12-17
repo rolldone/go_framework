@@ -1,0 +1,11 @@
+.sync_temp/config.json
+.sync_temp/file_cache.db
+.sync_temp/indexing_files.db
+.sync_temp/.ssh/config
+.sync_temp/logs/watcher.log
+.ssh/openssh_nopassword
+.ssh/public_key
+.env
+.sync_ignore
+make-sync.yaml
+.sync_temp/ssh-forward-ssh_umahstore_core-1765096256.log
