@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -62,21 +63,98 @@ func New(opts Options) (*App, error) {
 	r := gin.Default()
 
 	// Configure CORS from environment variable `CORS_ALLOWED_ORIGINS`.
-	// Value is a comma-separated list of allowed origins, e.g.
-	// "http://localhost:5173,http://localhost:4321"
+	// Value is a comma-separated list of allowed origins or patterns, e.g.
+	// "http://localhost:5173,http://localhost:4321,*.emergentagent.com"
 	if originsEnv := os.Getenv("CORS_ALLOWED_ORIGINS"); originsEnv != "" {
-		origins := strings.Split(originsEnv, ",")
-		for i := range origins {
-			origins[i] = strings.TrimSpace(origins[i])
+		raw := strings.Split(originsEnv, ",")
+		var exactOrigins []string
+		var patterns []string
+		for _, o := range raw {
+			o = strings.TrimSpace(o)
+			if o == "" {
+				continue
+			}
+			if strings.Contains(o, "*") {
+				patterns = append(patterns, o)
+			} else {
+				exactOrigins = append(exactOrigins, o)
+			}
 		}
+
 		corsCfg := cors.Config{
-			AllowOrigins:     origins,
 			AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type", "Accept", "x-go_framework-access-token"},
+			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type", "Accept", "x-artywiz_service-access-token"},
 			ExposeHeaders:    []string{"Content-Length"},
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
 		}
+
+		// If we have patterns, use AllowOriginFunc to dynamically validate origins.
+		if len(patterns) > 0 {
+			corsCfg.AllowOriginFunc = func(origin string) bool {
+				// Exact match check first
+				for _, e := range exactOrigins {
+					if origin == e {
+						return true
+					}
+				}
+
+				u, err := url.Parse(origin)
+				if err != nil {
+					return false
+				}
+				host := u.Hostname()
+				scheme := u.Scheme
+
+				for _, p := range patterns {
+					p = strings.TrimSpace(p)
+					if p == "" {
+						continue
+					}
+
+					// Pattern includes scheme (e.g. https://*.domain.com)
+					if strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") {
+						pu, err := url.Parse(p)
+						if err != nil {
+							continue
+						}
+						ph := pu.Hostname()
+						if strings.HasPrefix(ph, "*.") {
+							base := strings.TrimPrefix(ph, "*.")
+							if host == base || strings.HasSuffix(host, "."+base) {
+								if pu.Scheme == scheme {
+									return true
+								}
+							}
+						} else {
+							if pu.Scheme == scheme && host == ph {
+								return true
+							}
+						}
+					} else {
+						// Pattern without scheme, e.g. *.domain.com or domain.com
+						ph := p
+						if strings.HasPrefix(ph, "*.") {
+							base := strings.TrimPrefix(ph, "*.")
+							if host == base || strings.HasSuffix(host, "."+base) {
+								return true
+							}
+						} else {
+							if host == ph {
+								return true
+							}
+						}
+					}
+				}
+				return false
+			}
+
+			// Add exact origins as a fast-path list (optional)
+			corsCfg.AllowOrigins = exactOrigins
+		} else {
+			corsCfg.AllowOrigins = exactOrigins
+		}
+
 		r.Use(cors.New(corsCfg))
 	} else {
 		// Fallback to a sensible default (allow commonly used origins during development)
@@ -141,6 +219,21 @@ func (a *App) registerAdminRoutes() {
 
 // registerStoreRoutes wires all core store/public endpoints.
 func (a *App) registerStoreRoutes() {
+	// Root endpoint
+	a.router.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Hello World"})
+	})
+
+	// NOTE: assetlinks.json is served by the auth plugin to allow per-plugin
+	// control. Plugin `plugins/auth/plugin.go` registers the handler for
+	// `/.well-known/assetlinks.json`. The global handler was removed to avoid
+	// duplicate route registration.
+
+	// API root endpoint - match Python FastAPI behavior
+	apiGroup := a.router.Group("/api")
+	apiGroup.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Hello World"})
+	})
 }
 
 // registerSwaggerRoutes registers handlers for serving the generated swagger JSON and UI.

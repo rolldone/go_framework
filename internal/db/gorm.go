@@ -1,21 +1,39 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/joho/godotenv"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+var (
+	gormDB   *gorm.DB
+	gormOnce sync.Once
 )
 
 // GetGormDB creates a *gorm.DB using the same DSN logic as GetDB.
 func GetGormDB() (*gorm.DB, error) {
+	var err error
+	gormOnce.Do(func() {
+		gormDB, err = openGormDB()
+	})
+	return gormDB, err
+}
+
+func openGormDB() (*gorm.DB, error) {
 	// Load .env file
 	_ = godotenv.Overload()
 	// Reuse MIGRATE_DB_URL or DB_* env vars like GetDB()
@@ -48,7 +66,6 @@ func GetGormDB() (*gorm.DB, error) {
 		dbType = detectDBType(dsn)
 	}
 
-	// Log the DSN being used (masked) and environment fallbacks
 	// DSN is masked and not printed to avoid leaking credentials
 	log.Printf("Env DB: host=%s port=%s name=%s", os.Getenv("DB_HOST"), os.Getenv("DB_PORT"), os.Getenv("DB_NAME"))
 
@@ -92,7 +109,9 @@ func GetGormDB() (*gorm.DB, error) {
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
 	}
 
-	gdb, err := gorm.Open(dialector, &gorm.Config{})
+	gdb, err := gorm.Open(dialector, &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open gorm database: %w", err)
 	}
@@ -101,6 +120,7 @@ func GetGormDB() (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sql.DB from gorm DB: %w", err)
 	}
+	configurePool(sqlDB)
 	// Ping to verify connectivity
 	if err := sqlDB.Ping(); err != nil {
 		fmt.Printf("Database connection FAILED: host=%s port=%s name=%s error=%v\n", host, port, name, err)
@@ -108,6 +128,31 @@ func GetGormDB() (*gorm.DB, error) {
 	}
 	log.Printf("Database connected")
 	return gdb, nil
+}
+
+func configurePool(sqlDB *sql.DB) {
+	maxOpen := intFromEnv("DB_MAX_OPEN_CONNS", 50)
+	maxIdle := intFromEnv("DB_MAX_IDLE_CONNS", 10)
+	maxLifeSec := intFromEnv("DB_CONN_MAX_LIFETIME_SEC", 300)
+
+	if maxOpen > 0 {
+		sqlDB.SetMaxOpenConns(maxOpen)
+	}
+	if maxIdle >= 0 {
+		sqlDB.SetMaxIdleConns(maxIdle)
+	}
+	if maxLifeSec > 0 {
+		sqlDB.SetConnMaxLifetime(time.Duration(maxLifeSec) * time.Second)
+	}
+}
+
+func intFromEnv(key string, def int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func detectDBType(dsn string) string {

@@ -7,7 +7,7 @@ import (
 )
 
 type Admin struct {
-	ID            string    `gorm:"primaryKey;autoIncrement" json:"id"`
+	ID            uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	FirstName     string    `gorm:"size:191;not null" json:"first_name"`
 	LastName      string    `gorm:"size:191;not null" json:"last_name"`
 	Email         string    `gorm:"size:191;not null;unique" json:"email"`
