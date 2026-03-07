@@ -236,7 +236,7 @@ func (p *Plugin) RegisterServices(svcs *services.AdminServices) error { return n
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor { return nil }
 
-func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, front *gin.RouterGroup, svcs *services.AdminServices) error {
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error {
 	admin.GET("/plugins/%s/health", pluginhandlers.HealthHandler)
     return nil
 }
@@ -286,7 +286,7 @@ func (p *Plugin) RegisterServices(svcs *services.AdminServices) error { return n
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor { return nil }
 
-func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, front *gin.RouterGroup, svcs *services.AdminServices) error {
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error {
 	admin.GET("/plugins/%s/items", pluginhandlers.ListItems)
 	admin.POST("/plugins/%s/items", pluginhandlers.CreateItem)
 	admin.GET("/plugins/%s/items/:id", pluginhandlers.GetItem)
@@ -345,7 +345,7 @@ func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor {
     }}
 }
 
-func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, front *gin.RouterGroup, svcs *services.AdminServices) error {
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error {
     // No routes by default; add as needed
     return nil
 }

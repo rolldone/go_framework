@@ -10,11 +10,24 @@ import (
 )
 
 var (
-	accessSecret  = getEnv("JWT_ACCESS_SECRET", "change-me-access-secret")
-	refreshSecret = getEnv("JWT_REFRESH_SECRET", "change-me-refresh-secret")
+	accessSecret  string
+	refreshSecret string
 	accessExp     = int(getEnvInt("JWT_ACCESS_EXP_SECONDS", 600))      // 10m
 	refreshExp    = int(getEnvInt("JWT_REFRESH_EXP_SECONDS", 1209600)) // 14d
 )
+
+func init() {
+	// Prefer a single canonical secret if provided
+	if s := os.Getenv("AUTH_JWT_SECRET"); s != "" {
+		accessSecret = s
+		refreshSecret = s
+		return
+	}
+
+	// Fallback to legacy separate secrets for compatibility
+	accessSecret = getEnv("JWT_ACCESS_SECRET", "change-me-access-secret")
+	refreshSecret = getEnv("JWT_REFRESH_SECRET", "change-me-refresh-secret")
+}
 
 // AccessExpirySeconds returns configured access token lifetime in seconds.
 func AccessExpirySeconds() int {

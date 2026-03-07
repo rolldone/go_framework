@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"go_framework/internal/admin/services"
 	"go_framework/internal/db"
 	front "go_framework/internal/front/services"
+	"go_framework/internal/keydb"
 	"go_framework/internal/pluginloader"
 	"go_framework/internal/plugins"
 	"go_framework/internal/server"
@@ -53,6 +56,25 @@ func New(opts Options) (*App, error) {
 	gdb, err := db.GetGormDB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Initialize KeyDB for flash messages (non-fatal if unavailable)
+	keydbHost := os.Getenv("KEYDB_HOST")
+	keydbPort := os.Getenv("KEYDB_PORT")
+	keydbPass := os.Getenv("KEYDB_PASS")
+	keydbDBStr := os.Getenv("KEYDB_DB")
+	keydbDB := 0
+	if keydbDBStr != "" {
+		if parsed, err := strconv.Atoi(keydbDBStr); err == nil {
+			keydbDB = parsed
+		}
+	}
+	if keydbHost != "" && keydbPort != "" {
+		if err := keydb.Init(keydbHost, keydbPort, keydbPass, keydbDB); err != nil {
+			log.Printf("[WARNING] KeyDB init failed (flash messages unavailable): %v", err)
+		}
+	} else {
+		log.Println("[INFO] KeyDB not configured (KEYDB_HOST/PORT missing), flash messages disabled")
 	}
 
 	svc := services.NewServices(gdb)
@@ -165,13 +187,13 @@ func New(opts Options) (*App, error) {
 	admin := r.Group("/admin")
 	admin.Use(server.AuthMiddleware())
 
-	storeGroup := r.Group("/front")
+	apiGroup := r.Group("/api")
 
 	app := &App{
 		router:        r,
 		rootGroup:     root,
 		adminGroup:    admin,
-		frontGroup:    storeGroup,
+		frontGroup:    apiGroup,
 		services:      svc,
 		storeServices: storeSvc,
 	}
@@ -206,7 +228,7 @@ func (a *App) attachPlugins(registerPlugins func()) error {
 	plugins.AttachMiddleware(map[string]*gin.RouterGroup{
 		"global": a.rootGroup,
 		"admin":  a.adminGroup,
-		"store":  a.frontGroup,
+		"api":    a.frontGroup,
 	})
 
 	return plugins.RegisterAllRoutes(a.router, a.adminGroup, a.frontGroup, a.services)

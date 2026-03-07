@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
 	"go_framework/internal/pluginloader"
@@ -12,7 +13,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "console",
-	Short: "Console tools for Umahstore",
+	Short: "Console tools",
 }
 
 // Execute executes the root command using process args.
@@ -41,6 +42,17 @@ func NewRootCmd() *cobra.Command {
 }
 
 func init() {
+	// load .env using project standard (godotenv). Use Overload to match other packages
+	// which ensures .env values are loaded for console commands.
+	_ = godotenv.Overload()
+
+	// set short description from APP_NAME env (loaded from .env or process env)
+	appName := os.Getenv("APP_NAME")
+	if appName == "" {
+		appName = "unknown app"
+	}
+	rootCmd.Short = fmt.Sprintf("Console tools for %s", appName)
+
 	// register core plugins and their console commands
 	pluginloader.RegisterCorePlugins()
 	plugins.RegisterConsoleCommands(rootCmd)

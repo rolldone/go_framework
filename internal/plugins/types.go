@@ -20,7 +20,7 @@ type Plugin interface {
 	ID() string
 	RegisterServices(svcs *services.AdminServices) error
 	RegisterMiddleware() []MiddlewareDescriptor
-	RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, store *gin.RouterGroup, svcs *services.AdminServices) error
+	RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error
 	Seed(svcs *services.AdminServices) error
 	ConsoleCommands() []*cobra.Command
 }

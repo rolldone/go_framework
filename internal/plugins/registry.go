@@ -51,9 +51,9 @@ func AttachMiddleware(routers map[string]*gin.RouterGroup) {
 }
 
 // RegisterAllRoutes lets plugins attach routes to the shared routers.
-func RegisterAllRoutes(router *gin.Engine, admin *gin.RouterGroup, store *gin.RouterGroup, svcs *services.AdminServices) error {
+func RegisterAllRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error {
 	for _, p := range registered {
-		if err := p.RegisterRoutes(router, admin, store, svcs); err != nil {
+		if err := p.RegisterRoutes(router, admin, api, svcs); err != nil {
 			return err
 		}
 	}

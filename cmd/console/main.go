@@ -5,6 +5,9 @@ import (
 
 	"go_framework/internal/console"
 	"go_framework/internal/plugins"
+	auth "go_framework/plugins/auth"
+	billing "go_framework/plugins/billing"
+	node "go_framework/plugins/node"
 )
 
 func main() {
@@ -12,6 +15,6 @@ func main() {
 	syscall.Umask(0o002)
 	// To register additional plugins and their console commands, use:
 	// console.RegisterAdditionalPlugins([]plugins.Plugin{plugin.New()})
-	console.RegisterAdditionalPlugins([]plugins.Plugin{})
+	console.RegisterAdditionalPlugins([]plugins.Plugin{auth.New(), billing.New(), node.New()})
 	console.Execute()
 }
