@@ -17,6 +17,8 @@ Table of contents
 - Plugin system
 - Environment variables
 - Auth
+  - JWT utilities available
+  - Testing JWT functions
 - DB
 - Console commands overview
 - Migration commands (console)
@@ -166,16 +168,103 @@ Auth
 ----
 This framework provides JWT utilities but does not include built-in authentication services or middleware. Authentication should be implemented via plugins or custom code.
 
-JWT utilities available:
-- Token generation and verification: `internal/auth/jwt.go`
-- Claims and token types: `internal/auth/claims_tokens.go`
+JWT utilities available (`internal/auth`)
+-----------------------------------------
+
+**Basic JWT functions** (`jwt.go`):
+```go
+// Generate tokens
+token, err := auth.SignAccessToken(userID)       // Generate access token
+refresh, err := auth.SignRefreshToken(userID)    // Generate refresh token
+
+// Parse/verify tokens
+userID, err := auth.ParseAccessToken(tokenStr)   // Verify access token, returns user ID
+userID, err := auth.ParseRefreshToken(tokenStr)  // Verify refresh token, returns user ID
+
+// Get token expiry settings
+accessExp := auth.AccessExpirySeconds()   // e.g., 900 (15 minutes)
+refreshExp := auth.RefreshExpirySeconds() // e.g., 1209600 (14 days)
+```
+
+**Advanced JWT with custom claims** (`claims_tokens.go`):
+```go
+// Generate token with admin_id and level claims
+token, expTime, err := auth.GenerateAccessTokenWithLevel(
+    adminID,
+    "admin",  // level: "admin", "user", etc.
+    15 * time.Minute,
+)
+
+// Parse token and get claims
+claims, err := auth.ParseAccessTokenClaims(tokenStr)
+if err == nil {
+    adminID := claims.AdminID
+    level := claims.Level
+    exp := claims.ExpiresAt
+}
+```
+
+**Opaque refresh tokens** (non-JWT, for database storage):
+```go
+// Generate opaque token (96 random hex chars)
+plainToken, hashedToken, err := auth.GenerateOpaqueRefreshToken()
+// Store hashedToken in DB, return plainToken to client
+
+// Verify opaque token
+receivedHash := auth.HashOpaqueToken(plainTokenFromClient)
+// Compare receivedHash with hash stored in DB
+```
 
 Implementation notes:
 - The framework does NOT include built-in auth middleware or user/admin models
+- **JWT functions are STATELESS and database-agnostic** - they only encode/decode data into/from token strings
+- JWT tokens do NOT interact with database - you query the database separately using the ID from the token
+- Column names and table structure are completely up to you - JWT only returns the data you encoded (userID, adminID, etc.)
 - Implement authentication in a plugin (recommended) or in your own services
 - Use the JWT utilities in `internal/auth` for token generation and verification
 - Design your own middleware to validate tokens and inject user identity into `context.Context`
 - Pass `context.Context` to service methods to propagate request identity
+
+**Example workflow:**
+```go
+// 1. Login handler - user provides credentials
+func LoginHandler(c *gin.Context) {
+    // Verify credentials from YOUR database (any table structure)
+    var user YourUserModel  // Could be "users", "admins", "accounts", etc.
+    db.Where("email = ?", email).First(&user) // YOUR column names
+    
+    // Verify password (use your own hash method)
+    if !verifyPassword(user.Password, providedPassword) {
+        c.JSON(401, gin.H{"error": "invalid credentials"})
+        return
+    }
+    
+    // Generate JWT with the user ID (from YOUR database)
+    token, _ := auth.SignAccessToken(user.ID)  // Just needs an ID string
+    
+    c.JSON(200, gin.H{"token": token})
+}
+
+// 2. Protected handler - verify token and get user
+func ProtectedHandler(c *gin.Context) {
+    tokenStr := c.GetHeader("Authorization") // "Bearer xxx"
+    
+    // Parse token - returns the ID you encoded earlier
+    userID, err := auth.ParseAccessToken(tokenStr)
+    if err != nil {
+        c.JSON(401, gin.H{"error": "invalid token"})
+        return
+    }
+    
+    // Query YOUR database with YOUR schema
+    var user YourUserModel
+    db.First(&user, "id = ?", userID)  // Use whatever column name you have
+    
+    c.JSON(200, gin.H{"user": user})
+}
+```
+
+**Key point:** JWT is just a container for data. The actual database queries, column names, and table structures are entirely your responsibility.
 
 Security recommendations
 - Keep `AUTH_JWT_SECRET` (or legacy `JWT_SECRET`) out of source control; use environment injection or secret managers.
@@ -189,6 +278,66 @@ Example: implementing auth in a plugin
 - Implement login/register handlers and services
 - Create auth middleware that validates tokens and injects user ID into context
 - Register the middleware with appropriate priority in the plugin's `RegisterMiddleware()` method
+
+Testing JWT functions
+----------------------
+You can test JWT functions directly in your code or tests:
+
+```go
+package mytest
+
+import (
+    "testing"
+    "time"
+    "go_framework/internal/auth"
+)
+
+func TestJWT(t *testing.T) {
+    // Set environment variable for testing
+    t.Setenv("AUTH_JWT_SECRET", "test-secret-key")
+    
+    userID := "user123"
+    
+    // Generate access token
+    token, err := auth.SignAccessToken(userID)
+    if err != nil {
+        t.Fatalf("failed to sign token: %v", err)
+    }
+    
+    // Verify access token
+    parsedID, err := auth.ParseAccessToken(token)
+    if err != nil {
+        t.Fatalf("failed to parse token: %v", err)
+    }
+    
+    if parsedID != userID {
+        t.Errorf("expected %s, got %s", userID, parsedID)
+    }
+}
+
+func TestJWTWithClaims(t *testing.T) {
+    t.Setenv("AUTH_JWT_SECRET", "test-secret-key")
+    
+    // Generate token with custom claims
+    token, _, err := auth.GenerateAccessTokenWithLevel("admin123", "admin", 15*time.Minute)
+    if err != nil {
+        t.Fatal(err)
+    }
+    
+    // Parse and verify claims
+    claims, err := auth.ParseAccessTokenClaims(token)
+    if err != nil {
+        t.Fatal(err)
+    }
+    
+    if claims.AdminID != "admin123" {
+        t.Errorf("expected admin123, got %s", claims.AdminID)
+    }
+    if claims.Level != "admin" {
+        t.Errorf("expected admin, got %s", claims.Level)
+    }
+}
+```
 
 Testing
 - Unit-test auth-related logic by mocking token generation/verification helpers. Look at `internal/mail/mailer_test.go` for examples of structure and patterns.
