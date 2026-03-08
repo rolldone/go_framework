@@ -1,10 +1,9 @@
 package plugins
 
 import (
-	"go_framework/internal/admin/services"
-
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
+	"gorm.io/gorm"
 )
 
 // MiddlewareDescriptor describes a plugin-provided middleware.
@@ -18,9 +17,9 @@ type MiddlewareDescriptor struct {
 // Plugin defines the hooks a plugin can implement.
 type Plugin interface {
 	ID() string
-	RegisterServices(svcs *services.AdminServices) error
+	RegisterServices(db *gorm.DB) error
 	RegisterMiddleware() []MiddlewareDescriptor
-	RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error
-	Seed(svcs *services.AdminServices) error
+	RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, db *gorm.DB) error
+	Seed(db *gorm.DB) error
 	ConsoleCommands() []*cobra.Command
 }

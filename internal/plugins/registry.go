@@ -3,10 +3,9 @@ package plugins
 import (
 	"sort"
 
-	"go_framework/internal/admin/services"
-
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
+	"gorm.io/gorm"
 )
 
 var registered []Plugin
@@ -22,9 +21,9 @@ func RegisterPlugins(p []Plugin) {
 }
 
 // RegisterAllServices lets plugins extend the service bundle.
-func RegisterAllServices(svcs *services.AdminServices) error {
+func RegisterAllServices(db *gorm.DB) error {
 	for _, p := range registered {
-		if err := p.RegisterServices(svcs); err != nil {
+		if err := p.RegisterServices(db); err != nil {
 			return err
 		}
 	}
@@ -51,9 +50,9 @@ func AttachMiddleware(routers map[string]*gin.RouterGroup) {
 }
 
 // RegisterAllRoutes lets plugins attach routes to the shared routers.
-func RegisterAllRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, svcs *services.AdminServices) error {
+func RegisterAllRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, db *gorm.DB) error {
 	for _, p := range registered {
-		if err := p.RegisterRoutes(router, admin, api, svcs); err != nil {
+		if err := p.RegisterRoutes(router, admin, api, db); err != nil {
 			return err
 		}
 	}
@@ -61,9 +60,9 @@ func RegisterAllRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.Rout
 }
 
 // SeedAll allows plugins to seed data if desired.
-func SeedAll(svcs *services.AdminServices) error {
+func SeedAll(db *gorm.DB) error {
 	for _, p := range registered {
-		if err := p.Seed(svcs); err != nil {
+		if err := p.Seed(db); err != nil {
 			return err
 		}
 	}

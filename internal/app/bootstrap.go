@@ -17,11 +17,12 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	"go_framework/internal/admin/services"
 	"go_framework/internal/db"
 	"go_framework/internal/keydb"
 	"go_framework/internal/pluginloader"
 	"go_framework/internal/plugins"
+
+	"gorm.io/gorm"
 )
 
 // Options customizes how the Umahstore app boots.
@@ -45,7 +46,7 @@ type App struct {
 	rootGroup  *gin.RouterGroup
 	adminGroup *gin.RouterGroup
 	frontGroup *gin.RouterGroup
-	services   *services.AdminServices
+	gdb        *gorm.DB
 }
 
 // New assembles the application: DB, services, routes, plugins, swagger.
@@ -73,9 +74,6 @@ func New(opts Options) (*App, error) {
 	} else {
 		log.Println("[INFO] KeyDB not configured (KEYDB_HOST/PORT missing), flash messages disabled")
 	}
-
-	svc := services.NewServices(gdb)
-	services.SetDefault(svc)
 
 	r := gin.Default()
 
@@ -188,7 +186,7 @@ func New(opts Options) (*App, error) {
 		rootGroup:  root,
 		adminGroup: admin,
 		frontGroup: apiGroup,
-		services:   svc,
+		gdb:        gdb,
 	}
 
 	app.registerAdminRoutes()
@@ -224,7 +222,7 @@ func (a *App) attachPlugins(registerPlugins func()) error {
 		"api":    a.frontGroup,
 	})
 
-	return plugins.RegisterAllRoutes(a.router, a.adminGroup, a.frontGroup, a.services)
+	return plugins.RegisterAllRoutes(a.router, a.adminGroup, a.frontGroup, a.gdb)
 }
 
 // registerAdminRoutes wires all core admin endpoints.

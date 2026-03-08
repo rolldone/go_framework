@@ -6,9 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go_framework/internal/admin/services"
 	"go_framework/internal/db"
 	"go_framework/internal/plugins"
+
+	"gorm.io/gorm"
 )
 
 var (
@@ -42,8 +43,7 @@ var seedCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("connect to database: %w", err)
 		}
-		svc := services.NewServices(gdb)
-		if err := runServiceSeed(svc); err != nil {
+		if err := runServiceSeed(gdb); err != nil {
 			return err
 		}
 		fmt.Println("seed applied via services")
@@ -69,20 +69,20 @@ func runSQLSeed() error {
 	return nil
 }
 
-func runServiceSeed(svc *services.AdminServices) error {
-	return seedPlugins(svc)
+func runServiceSeed(gdb *gorm.DB) error {
+	return seedPlugins(gdb)
 }
 
-func seedPlugins(svc *services.AdminServices) error {
+func seedPlugins(gdb *gorm.DB) error {
 	switch seedPlugin {
 	case "core":
 		return nil
 	case "all":
-		return plugins.SeedAll(svc)
+		return plugins.SeedAll(gdb)
 	default:
 		for _, p := range plugins.RegisteredPlugins() {
 			if p.ID() == seedPlugin {
-				return p.Seed(svc)
+				return p.Seed(gdb)
 			}
 		}
 		return fmt.Errorf("plugin %q is not registered", seedPlugin)
