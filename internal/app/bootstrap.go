@@ -19,11 +19,9 @@ import (
 
 	"go_framework/internal/admin/services"
 	"go_framework/internal/db"
-	front "go_framework/internal/front/services"
 	"go_framework/internal/keydb"
 	"go_framework/internal/pluginloader"
 	"go_framework/internal/plugins"
-	"go_framework/internal/server"
 )
 
 // Options customizes how the Umahstore app boots.
@@ -43,12 +41,11 @@ func Run(opts Options) error {
 
 // App contains the assembled server state.
 type App struct {
-	router        *gin.Engine
-	rootGroup     *gin.RouterGroup
-	adminGroup    *gin.RouterGroup
-	frontGroup    *gin.RouterGroup
-	services      *services.AdminServices
-	storeServices *front.StoreServices
+	router     *gin.Engine
+	rootGroup  *gin.RouterGroup
+	adminGroup *gin.RouterGroup
+	frontGroup *gin.RouterGroup
+	services   *services.AdminServices
 }
 
 // New assembles the application: DB, services, routes, plugins, swagger.
@@ -79,8 +76,6 @@ func New(opts Options) (*App, error) {
 
 	svc := services.NewServices(gdb)
 	services.SetDefault(svc)
-	storeSvc := front.NewStoreServices(svc)
-	front.SetDefault(storeSvc)
 
 	r := gin.Default()
 
@@ -185,17 +180,15 @@ func New(opts Options) (*App, error) {
 	root := r.Group("")
 
 	admin := r.Group("/admin")
-	admin.Use(server.AuthMiddleware())
 
 	apiGroup := r.Group("/api")
 
 	app := &App{
-		router:        r,
-		rootGroup:     root,
-		adminGroup:    admin,
-		frontGroup:    apiGroup,
-		services:      svc,
-		storeServices: storeSvc,
+		router:     r,
+		rootGroup:  root,
+		adminGroup: admin,
+		frontGroup: apiGroup,
+		services:   svc,
 	}
 
 	app.registerAdminRoutes()

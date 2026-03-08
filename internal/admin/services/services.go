@@ -7,8 +7,7 @@ import (
 // AdminServices groups all admin services together. The specific service
 // interfaces are defined in their own files (product.go, user.go, customer.go).
 type AdminServices struct {
-	DB   *gorm.DB
-	Auth *AuthService
+	DB *gorm.DB
 }
 
 // Default is the package-level services instance used by handlers.

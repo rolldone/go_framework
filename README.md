@@ -9,6 +9,8 @@ Table of contents
 -----------------
 - Overview
 - Quick Start
+- What's included
+- What's NOT included (implement via plugins)
 - Main components
 - Bootstrapping
 - Request flow
@@ -23,8 +25,12 @@ Table of contents
 
 Overview
 --------
-- This project is a modular Go web service with CLI utilities. Main binaries are `cmd/server/main.go` (HTTP server) and `cmd/console/main.go` (CLI/migrations).
-- Application bootstrap and dependency wiring are implemented in `internal/app/bootstrap.go`.
+- This is a **minimalist, plugin-based Go web framework** for building modular backend services
+- Main binaries: `cmd/server/main.go` (HTTP server) and `cmd/console/main.go` (CLI/migrations)
+- Core philosophy: provide essential infrastructure (DB, routing, plugins) and let you implement features via plugins or custom code
+- **No built-in authentication or user management** - implement via plugins (recommended) or custom middleware
+- Application bootstrap and dependency wiring are in `internal/app/bootstrap.go`
+- Extensible via a plugin system that supports middleware, routes, services, migrations, and console commands
 
 Quick Start
 -----------
@@ -55,17 +61,43 @@ go run ./cmd/console plugin new --id my-plugin
 
 Untuk detail lainnya lihat bagian di bawah.
 
+What's included
+---------------
+✅ Database connectivity (GORM - PostgreSQL, MySQL, MariaDB)  
+✅ Database migrations system  
+✅ Plugin architecture (middleware, routes, services, migrations, console commands)  
+✅ Plugin generator CLI (`plugin new`)  
+✅ JWT utilities (token generation/verification)  
+✅ CORS configuration  
+✅ Console commands (migrations, plugin generator, user management stub)  
+✅ KeyDB/Redis client (for flash messages)  
+✅ Mailer utilities  
+✅ Transaction helpers  
+✅ Swagger documentation support  
+
+What's NOT included (implement via plugins)
+--------------------------------------------
+❌ Authentication service & middleware  
+❌ User/Admin models  
+❌ Authorization/permissions system  
+❌ Built-in CRUD endpoints  
+❌ Session management  
+❌ Password hashing/verification utilities  
+
+**Recommended:** Create an `auth` plugin using the plugin generator to implement authentication features.
+
 Main components
 ---------------
 - Bootstrap & wiring: `internal/app/bootstrap.go`
-- HTTP server & middleware: `internal/server/middleware.go`
-- Routing & handlers: `internal/front/handler`
-- Business services: domain services under `internal/*/services`
+- Business services: `internal/admin/services`
 - Database (GORM): `internal/db/gorm.go`
-- Auth (JWT): `internal/auth`
+- Auth utilities (JWT): `internal/auth` (token generation/verification helpers)
 - Plugin system: `internal/pluginloader` and `internal/plugins`
 - CLI / migrations: `internal/console`
 - Mailer: `internal/mail`
+- KeyDB/Redis client: `internal/keydb`
+- Events: `internal/events`
+- UUID v7 generator: `internal/uuid`
 
 Environment variables
 ---------------------
@@ -132,18 +164,31 @@ Security notes
 
 Auth
 ----
-This project supports JWT-based authentication. Key points and integration details:
+This framework provides JWT utilities but does not include built-in authentication services or middleware. Authentication should be implemented via plugins or custom code.
 
-- Token types: the codebase uses signed JWT access and refresh tokens for request auth. Token generation and verification are handled in `internal/auth/jwt.go` and `internal/auth/claims_tokens.go`.
-- Token locations: auth middleware validates tokens from `Authorization: Bearer <token>` header; cookie-based tokens are supported if configured by application code.
-- Verification: token verification and claims parsing occur in `internal/auth/jwt.go`. Middleware in `internal/server/middleware.go` (or the auth-specific middleware) calls these helpers and, on success, injects the authenticated identity into the request `context.Context`.
-- Context usage: handlers and service functions should accept `context.Context` and retrieve actor info from context keys provided by the auth middleware (follow existing patterns in `internal/*/services.go`).
+JWT utilities available:
+- Token generation and verification: `internal/auth/jwt.go`
+- Claims and token types: `internal/auth/claims_tokens.go`
+
+Implementation notes:
+- The framework does NOT include built-in auth middleware or user/admin models
+- Implement authentication in a plugin (recommended) or in your own services
+- Use the JWT utilities in `internal/auth` for token generation and verification
+- Design your own middleware to validate tokens and inject user identity into `context.Context`
+- Pass `context.Context` to service methods to propagate request identity
 
 Security recommendations
 - Keep `AUTH_JWT_SECRET` (or legacy `JWT_SECRET`) out of source control; use environment injection or secret managers.
 - Use short `JWT_ACCESS_EXP_SECONDS` values for access tokens (recommended: 900 seconds / 15 minutes) and longer `JWT_REFRESH_EXP_SECONDS` for refresh tokens.
 - Always serve authentication endpoints over HTTPS; set cookie flags `Secure`, `HttpOnly`, and `SameSite` when using cookies.
 - Rotate signing keys and provide a migration/rotation plan (support key identifiers (`kid`) in tokens if you add multiple keys).
+
+Example: implementing auth in a plugin
+- Create an auth plugin using `go run ./cmd/console plugin new --id auth`
+- Add user/admin models in the plugin
+- Implement login/register handlers and services
+- Create auth middleware that validates tokens and injects user ID into context
+- Register the middleware with appropriate priority in the plugin's `RegisterMiddleware()` method
 
 Testing
 - Unit-test auth-related logic by mocking token generation/verification helpers. Look at `internal/mail/mailer_test.go` for examples of structure and patterns.
@@ -243,12 +288,14 @@ Notes:
 
 Transactions & context patterns
 -------------------------------
-This project uses GORM (`*gorm.DB`) held on the `AdminServices` struct (`internal/admin/services.AdminServices`). When you need transactional consistency across multiple service calls, prefer starting a transaction at the HTTP handler boundary and pass the transaction (`*gorm.DB`) explicitly into service methods. Also propagate the request `context.Context` into DB operations so cancellations/deadlines are honored.
+This project uses GORM (`*gorm.DB`) held on the `AdminServices` struct (`internal/admin/services/services.go`). The core `AdminServices` contains only a `DB` field - you can extend it with custom services via plugins or by modifying the struct directly.
+
+When you need transactional consistency across multiple service calls, prefer starting a transaction at the HTTP handler boundary and pass the transaction (`*gorm.DB`) explicitly into service methods. Also propagate the request `context.Context` into DB operations so cancellations/deadlines are honored.
 
 Recommended handler pattern (Gin example):
 
 ```go
-func CreateUserHandler(c *gin.Context) {
+func CreateItemHandler(c *gin.Context) {
    svc := services.GetDefault()
    ctx := c.Request.Context()
 
@@ -269,7 +316,7 @@ func CreateUserHandler(c *gin.Context) {
 
    // pass tx (with context) into service layer
    tx = tx.WithContext(ctx)
-   if err := svc.Auth.CreateUser(ctx, tx, req); err != nil {
+   if err := yourService.CreateItem(ctx, tx, req); err != nil {
       c.JSON(400, gin.H{"error": err.Error()})
       return
    }
@@ -286,9 +333,9 @@ func CreateUserHandler(c *gin.Context) {
 Service method signature example (accept tx explicitly):
 
 ```go
-func (s *AuthService) CreateUser(ctx context.Context, db *gorm.DB, req *CreateUserReq) error {
+func (s *YourService) CreateItem(ctx context.Context, db *gorm.DB, req *CreateItemReq) error {
    // use db (transaction) which already has ctx via db = db.WithContext(ctx)
-   if err := db.Create(&user).Error; err != nil {
+   if err := db.Create(&item).Error; err != nil {
       return err
    }
    // call other DB ops using the same `db` to participate in the transaction
@@ -307,7 +354,7 @@ Helper utility
 
 ```go
 err := db.WithTransaction(ctx, svc.DB, func(tx *gorm.DB) error {
-   if err := svc.Auth.CreateUser(ctx, tx, req); err != nil {
+   if err := yourService.CreateItem(ctx, tx, req); err != nil {
       return err
    }
    // other DB ops using tx...
@@ -330,6 +377,7 @@ This project includes a pluggable architecture so features can be implemented as
 Key concepts
 - Discovery: plugins are created under the `plugins/` directory (currently empty in this starter framework). Each plugin has its own folder with optional `migrations/`, handlers, and registration code.
 - Registration: plugins register themselves with the registry during application bootstrap in `cmd/server/main.go` and `cmd/console/main.go`; this allows them to add routes, middleware, and service hooks.
+- Service extension: plugins can extend `AdminServices` by adding custom service fields in their `RegisterServices()` method (see example below)
 - Middleware ordering: plugin middleware is executed according to priorities defined in `internal/plugins/middleware_priorities.go`. When adding middleware from a plugin, choose a priority to avoid surprising ordering interactions with core middlewares.
 - Migrations: plugins can include DB migrations under `plugins/{plugin_id}/migrations/{db_type}` (e.g., `migrations/postgres/`); the console migrate commands detect and apply plugin migrations in the configured order.
 
@@ -449,7 +497,10 @@ func New() plugins.Plugin { return &MyPlugin{} }
 func (p *MyPlugin) ID() string { return "myplugin" }
 
 func (p *MyPlugin) RegisterServices(svcs *services.AdminServices) error {
-   // extend services if needed
+   // Option 1: Just use the DB connection directly from svcs.DB
+   // Option 2: Extend AdminServices with your own service by adding fields
+   // Note: To add custom service fields, modify internal/admin/services/services.go
+   // and add your service initialization in internal/admin/services/new_services.go
    return nil
 }
 
@@ -479,22 +530,31 @@ Notes:
 
 Bootstrapping (high level)
 --------------------------
-1. `cmd/server` calls bootstrap in `internal/app` to initialize configuration, DB (GORM), KeyDB (for flash messages), services, and router with CORS.
-2. Plugins are loaded via `internal/pluginloader` (core plugins) and user-provided plugins registered in `cmd/server/main.go`.
-3. Plugin middleware and routes are attached to the router.
-4. HTTP server is started.
+1. `cmd/server` calls bootstrap in `internal/app` to initialize:
+   - Configuration from environment variables
+   - Database connection (GORM)
+   - KeyDB/Redis connection (for flash messages)
+   - Admin services (`AdminServices` with DB connection)
+   - Gin router with CORS configuration
+2. Core plugins are loaded via `internal/pluginloader`, then user-provided plugins registered in `cmd/server/main.go`
+3. Plugin services are registered (extends `AdminServices`)
+4. Plugin middleware are attached to router groups (global, admin, api) based on priority
+5. Plugin routes are registered
+6. Swagger documentation routes are registered (if enabled)
+7. HTTP server is started on configured port
 
 Request flow (execution order)
 -----------------------------
 1. Client HTTP request arrives at the server binary (`cmd/server`).
 2. Router matches the route and triggers the middleware chain.
 3. Global middleware execute in priority order:
-   - Core middlewares (logging, recovery, CORS, request-id).
-   - Authentication middleware (`internal/auth`) — verifies header/cookie tokens and injects user identity into the request context.
-   - Application / plugin middleware (plugin middleware are registered according to priorities defined in `internal/plugins/middleware_priorities.go`).
-4. After middleware, the matched handler runs (e.g. handlers in `internal/front/handler` or plugin-registered handlers).
-5. Handler calls into service layer (`internal/*/services`) for business logic and DB interactions (`internal/db`).
-6. Services interact with GORM and return domain models to the handler.
+   - Gin's default middlewares (Logger, Recovery)
+   - CORS middleware (if configured via `CORS_ALLOWED_ORIGINS`)
+   - Plugin middleware (registered according to priorities defined in `internal/plugins/middleware_priorities.go`)
+   - Note: Authentication middleware is NOT included by default — implement in a plugin
+4. After middleware, the matched handler runs (plugin-registered handlers or custom handlers).
+5. Handler calls into service layer (`internal/admin/services` or plugin services) for business logic and DB interactions.
+6. Services interact with GORM (`internal/db/gorm.go`) and return results to the handler.
 7. Handler serializes the response (JSON/HTML) and returns it to the client.
 8. Plugin hooks or response middleware may modify the response before it is sent.
 
@@ -506,21 +566,47 @@ Plugin system notes
 
 Extension points & best practices
 --------------------------------
-- Add routes/handlers by registering them in bootstrap or via plugins.
-- Register middleware with explicit priority so execution order is predictable.
-- Keep service layer decoupled from HTTP layer — services should accept `context.Context` and repository interfaces.
-- Use `context` to pass identity and DB transactions into services.
-- Mock DB and services for unit testing; see `internal/mail/mailer_test.go` for example patterns.
+**Plugin-first approach:**
+- Implement features (auth, user management, business logic) as plugins rather than modifying core files
+- Use `go run ./cmd/console plugin new --id <feature-name>` to generate plugin scaffolds
+- Keep plugins isolated and testable - each plugin should be self-contained
+
+**Code organization:**
+- Add routes/handlers via plugins (recommended) or by modifying `internal/app/bootstrap.go`
+- Register middleware with explicit priority so execution order is predictable
+- Keep service layer decoupled from HTTP layer — services should accept `context.Context` and repository interfaces
+- Extend `AdminServices` by adding fields in `internal/admin/services/services.go` and initializing in `new_services.go`
+
+**Database & transactions:**
+- Use `context.Context` to pass request identity and cancellation signals into services
+- Pass `*gorm.DB` transactions explicitly to service methods (see Transactions & context patterns section)
+- Use the transaction helper `db.WithTransaction()` in `internal/db/tx.go` to simplify error handling
+
+**Testing:**
+- Mock DB and services for unit testing; see `internal/mail/mailer_test.go` for example patterns
+- Test plugins in isolation by providing mock `AdminServices` instances
+- Use `go run ./cmd/console migrate --db <type> up` to run migrations in test databases
+
+**Security:**
+- Implement authentication middleware in a plugin and register with appropriate priority
+- Never commit secrets to version control - use environment variables and secret managers
+- Validate and sanitize all user inputs in handlers before passing to services
 
 Quick file references
 ---------------------
 - Server entry: `cmd/server/main.go`
+- Console entry: `cmd/console/main.go`
 - Bootstrap: `internal/app/bootstrap.go`
-- Middleware: `internal/server/middleware.go`
+- Admin services: `internal/admin/services/services.go`
 - Plugin loader: `internal/pluginloader/loader.go`
-- Plugins registry: `internal/plugins/registry.go`
+- Plugin registry: `internal/plugins/registry.go`
+- Plugin types: `internal/plugins/types.go`
 - DB (GORM): `internal/db/gorm.go`
-- Auth: `internal/auth/jwt.go`
+- DB transactions: `internal/db/tx.go`
+- Auth utilities (JWT): `internal/auth/jwt.go`
+- Console commands: `internal/console/`
+- Mailer: `internal/mail/mailer.go`
+- KeyDB client: `internal/keydb/client.go`
 
 Request Flow Diagram
 --------------------
