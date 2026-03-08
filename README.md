@@ -16,8 +16,10 @@ Table of contents
 - Environment variables
 - Auth
 - DB
+- Console commands overview
 - Migration commands (console)
-- Plugin quickstart
+- Plugin quickstart (CLI generator)
+- Plugin registration (manual)
 
 Overview
 --------
@@ -43,6 +45,12 @@ go run ./cmd/console migrate up
 
 ```bash
 go run ./cmd/server
+```
+
+4. (Optional) Generate a new plugin:
+
+```bash
+go run ./cmd/console plugin new --id my-plugin
 ```
 
 Untuk detail lainnya lihat bagian di bawah.
@@ -175,6 +183,29 @@ go run ./cmd/console migrate
 Backup & maintenance
 - Regularly backup the DB and test restores. Use read replicas for analytics/reporting to reduce load on primary.
 - Apply schema changes during maintenance windows for high-traffic production systems.
+
+Console commands overview
+--------------------------
+The console (`cmd/console`) provides several commands for development and operations:
+
+```bash
+# Show all available commands
+go run ./cmd/console --help
+
+# Database migrations
+go run ./cmd/console migrate [make|up|down|down-all|list]
+
+# Plugin generator
+go run ./cmd/console plugin new --id <plugin-id> [--template minimal|crud|middleware]
+
+# Seed data
+go run ./cmd/console seed [--plugin core|all|<plugin-id>]
+
+# User management (if implemented)
+go run ./cmd/console user [create|list|update|delete|get]
+```
+
+See sections below for detailed usage of each command.
 
 Migration commands (console)
 ----------------------------
@@ -310,8 +341,47 @@ Integration notes
 Testing & safety
 - Test plugins in isolation by running their handlers/services against a test instance of the registry and a sandbox DB.
 
-Plugin registration quickstart
+Plugin quickstart (CLI generator)
+---------------------------------
+The fastest way to create a new plugin is using the console command:
+
+```bash
+# Generate a minimal plugin
+go run ./cmd/console plugin new --id my-plugin
+
+# Generate a CRUD plugin with handlers and services
+go run ./cmd/console plugin new --id my-plugin --template crud
+
+# Generate a middleware-focused plugin
+go run ./cmd/console plugin new --id my-plugin --template middleware
+
+# With custom display name
+go run ./cmd/console plugin new --id my-plugin --name "My Awesome Plugin"
+
+# Skip console command stub
+go run ./cmd/console plugin new --id my-plugin --no-console
+```
+
+**Template options:**
+- `minimal` (default) - Basic plugin with a health check handler
+- `crud` - Includes CRUD handlers and service layer for resource management
+- `middleware` - Focuses on middleware with sample middleware implementation
+
+**Generated structure:**
+- `plugins/my_plugin/plugin.go` - main plugin file implementing `plugins.Plugin` interface
+- `plugins/my_plugin/handlers/` - HTTP handler files (health.go, resource.go, etc.)
+- `plugins/my_plugin/migrations/postgres/` - migration files (000001_init.up.sql, 000001_init.down.sql)
+- `plugins/my_plugin/services/` - service layer (CRUD template only)
+- `plugins/my_plugin/middleware/` - middleware implementations (middleware template only)
+
+**After generating, you must register the plugin in both:**
+- `cmd/server/main.go` - for HTTP server routes and middleware
+- `cmd/console/main.go` - for console commands (migrations, seeds, custom commands)
+
+Plugin registration (manual)
 -----------------------------
+To manually create a plugin or understand the structure:
+
 1. Create a plugin package under `plugins/<plugin_id>/` in your workspace.
 2. Implement the `plugins.Plugin` interface (see `internal/plugins/types.go`). Minimal responsibilities:
    - `ID() string` — return plugin id
@@ -327,7 +397,8 @@ Plugin registration quickstart
 ```go
 import (
    // ... other imports
-   myplugin "go_framework/plugins/myplugin"
+   "go_framework/internal/plugins"
+   myplugin "go_framework/plugins/my_plugin"  // note: use underscore for import path
 )
 
 func main() {
@@ -346,7 +417,9 @@ func main() {
 ```go
 import (
    // ... other imports
-   myplugin "go_framework/plugins/myplugin"
+   "go_framework/internal/console"
+   "go_framework/internal/plugins"
+   myplugin "go_framework/plugins/my_plugin"  // note: use underscore for import path
 )
 
 func main() {
