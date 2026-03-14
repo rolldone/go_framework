@@ -1,9 +1,9 @@
 Architecture & Request Flow
 ===========================
 
-Ringkasan
----------
-Repository ini adalah kerangka aplikasi web Go modular untuk layanan backend. Dokumentasi di sini menjelaskan arsitektur, alur request, variabel lingkungan penting, dan cara menjalankan alat pengembangan (server dan console).
+Summary
+-------
+This repository is a modular Go web application framework for backend services. The documentation here explains the architecture, request flow, important environment variables, and how to run development tools (server and console).
 
 Table of contents
 -----------------
@@ -61,7 +61,7 @@ go run ./cmd/server
 go run ./cmd/console plugin new --id my-plugin
 ```
 
-Untuk detail lainnya lihat bagian di bawah.
+See sections below for more details.
 
 What's included
 ---------------
@@ -98,6 +98,7 @@ Main components
 - CLI / migrations: `internal/console`
 - Mailer: `internal/mail`
 - KeyDB/Redis client: `internal/keydb`
+- Storage abstraction: `internal/storage`
 - Events: `internal/events`
 - UUID v7 generator: `internal/uuid`
 
@@ -146,6 +147,12 @@ Cache / Flash Messages (KeyDB/Redis)
 - `KEYDB_PORT`=6379
 - `KEYDB_PASS`= — optional password
 - `KEYDB_DB`=0 — database number
+
+Storage
+- `STORAGE_DRIVER`=local|s3
+- `STORAGE_ROOT`=./storage — used when `STORAGE_DRIVER=local`
+- `STORAGE_PUBLIC_URL`=http://localhost:8080/assets
+- `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` — used when `STORAGE_DRIVER=s3`
 
 CORS
 - `CORS_ALLOWED_ORIGINS`="http://localhost:5173,http://localhost:4321" — comma-separated list of allowed origins
@@ -437,7 +444,7 @@ Notes:
 
 Transactions & context patterns
 -------------------------------
-This project uses GORM (`*gorm.DB`) held on the `AdminServices` struct (`internal/admin/services/services.go`). The core `AdminServices` contains only a `DB` field - you can extend it with custom services via plugins or by modifying the struct directly.
+This project uses GORM (`*gorm.DB`) as the shared database dependency and passes it to plugins through `plugins.ServiceDeps`. For file/object storage access, plugins also receive `storage.Store` from the same dependencies.
 
 When you need transactional consistency across multiple service calls, prefer starting a transaction at the HTTP handler boundary and pass the transaction (`*gorm.DB`) explicitly into service methods. Also propagate the request `context.Context` into DB operations so cancellations/deadlines are honored.
 
@@ -445,11 +452,11 @@ Recommended handler pattern (Gin example):
 
 ```go
 func CreateItemHandler(c *gin.Context) {
-   svc := services.GetDefault()
    ctx := c.Request.Context()
+   gdb := deps.DB
 
    // start transaction
-   tx := svc.DB.Begin()
+   tx := gdb.Begin()
    if tx.Error != nil {
       c.JSON(500, gin.H{"error": "failed to start tx"})
       return
@@ -497,12 +504,12 @@ Notes & best practices
 - Use `db.WithContext(ctx)` so query cancellation and timeouts propagate.
 - Keep transactions short: perform only necessary DB work inside a transaction to avoid locking contention.
 - Handle panics and ensure `Rollback()` is called unless `Commit()` succeeded.
-- For read-only handlers that do not need transactions, use the shared `svc.DB` directly (without `Begin()`).
+- For read-only handlers that do not need transactions, use the shared DB dependency directly (for example `deps.DB`) without `Begin()`.
 Helper utility
 - `internal/db/tx.go` exposes `WithTransaction(ctx, gdb, fn)` which wraps begin/commit/rollback and panic handling. Use it to simplify handlers:
 
 ```go
-err := db.WithTransaction(ctx, svc.DB, func(tx *gorm.DB) error {
+err := db.WithTransaction(ctx, deps.DB, func(tx *gorm.DB) error {
    if err := yourService.CreateItem(ctx, tx, req); err != nil {
       return err
    }
@@ -526,8 +533,8 @@ This project includes a pluggable architecture so features can be implemented as
 Key concepts
 - Discovery: plugins are created under the `plugins/` directory (currently empty in this starter framework). Each plugin has its own folder with optional `migrations/`, handlers, and registration code.
 - Registration: plugins register themselves with the registry during application bootstrap in `cmd/server/main.go` and `cmd/console/main.go`; this allows them to add routes, middleware, and service hooks.
-- Service extension: plugins can extend `AdminServices` by adding custom service fields in their `RegisterServices()` method (see example below)
-- Middleware ordering: plugin middleware is executed according to priorities defined in `internal/plugins/middleware_priorities.go`. When adding middleware from a plugin, choose a priority to avoid surprising ordering interactions with core middlewares.
+- Service deps: plugins receive shared dependencies through `plugins.ServiceDeps`, currently `DB *gorm.DB` and `Store storage.Store`.
+- Middleware ordering: plugin middleware is executed according to priorities defined in `internal/plugins/middleware_priorities.go`. Valid targets are `global`, `admin`, and `api`.
 - Migrations: plugins can include DB migrations under `plugins/{plugin_id}/migrations/{db_type}` (e.g., `migrations/postgres/`); the console migrate commands detect and apply plugin migrations in the configured order.
 
 Integration notes
@@ -582,10 +589,10 @@ To manually create a plugin or understand the structure:
 1. Create a plugin package under `plugins/<plugin_id>/` in your workspace.
 2. Implement the `plugins.Plugin` interface (see `internal/plugins/types.go`). Minimal responsibilities:
    - `ID() string` — return plugin id
-   - `RegisterServices(svcs *services.AdminServices) error` — extend shared services
-   - `RegisterMiddleware() []plugins.MiddlewareDescriptor` — provide middleware descriptors (Target: `global`, `admin`, `store`)
-   - `RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, store *gin.RouterGroup, svcs *services.AdminServices) error` — attach routes
-   - `Seed(svcs *services.AdminServices) error` — optional seed data
+   - `RegisterServices(deps plugins.ServiceDeps) error` — initialize plugin services using shared DB/storage deps
+   - `RegisterMiddleware() []plugins.MiddlewareDescriptor` — provide middleware descriptors (Target: `global`, `admin`, `api`)
+   - `RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error` — attach routes
+   - `Seed() error` — optional seed data
    - `ConsoleCommands() []*cobra.Command` — optional CLI commands
 
 3. Register the plugin in both `cmd/server/main.go` and `cmd/console/main.go`:
@@ -636,7 +643,6 @@ import (
    "github.com/gin-gonic/gin"
    "github.com/spf13/cobra"
    "go_framework/internal/plugins"
-   "go_framework/internal/admin/services"
 )
 
 type MyPlugin struct{}
@@ -645,11 +651,8 @@ func New() plugins.Plugin { return &MyPlugin{} }
 
 func (p *MyPlugin) ID() string { return "myplugin" }
 
-func (p *MyPlugin) RegisterServices(svcs *services.AdminServices) error {
-   // Option 1: Just use the DB connection directly from svcs.DB
-   // Option 2: Extend AdminServices with your own service by adding fields
-   // Note: To add custom service fields, modify internal/admin/services/services.go
-   // and add your service initialization in internal/admin/services/new_services.go
+func (p *MyPlugin) RegisterServices(deps plugins.ServiceDeps) error {
+   // deps.DB dan deps.Store tersedia di sini
    return nil
 }
 
@@ -659,12 +662,14 @@ func (p *MyPlugin) RegisterMiddleware() []plugins.MiddlewareDescriptor {
    }
 }
 
-func (p *MyPlugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, store *gin.RouterGroup, svcs *services.AdminServices) error {
+func (p *MyPlugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error {
    admin.GET("/myplugin/ping", func(c *gin.Context) { c.JSON(200, gin.H{"pong": true}) })
+   _ = router
+   _ = api
    return nil
 }
 
-func (p *MyPlugin) Seed(svcs *services.AdminServices) error { return nil }
+func (p *MyPlugin) Seed() error { return nil }
 
 func (p *MyPlugin) ConsoleCommands() []*cobra.Command { return nil }
 ```
@@ -682,11 +687,12 @@ Bootstrapping (high level)
 1. `cmd/server` calls bootstrap in `internal/app` to initialize:
    - Configuration from environment variables
    - Database connection (GORM)
+   - Storage service (`local` or `s3`)
    - KeyDB/Redis connection (for flash messages)
-   - Admin services (`AdminServices` with DB connection)
    - Gin router with CORS configuration
+   - Static `/assets` route when local storage is active
 2. Core plugins are loaded via `internal/pluginloader`, then user-provided plugins registered in `cmd/server/main.go`
-3. Plugin services are registered (extends `AdminServices`)
+3. Plugin services are registered with shared deps (`plugins.ServiceDeps{DB, Store}`)
 4. Plugin middleware are attached to router groups (global, admin, api) based on priority
 5. Plugin routes are registered
 6. Swagger documentation routes are registered (if enabled)
@@ -702,8 +708,8 @@ Request flow (execution order)
    - Plugin middleware (registered according to priorities defined in `internal/plugins/middleware_priorities.go`)
    - Note: Authentication middleware is NOT included by default — implement in a plugin
 4. After middleware, the matched handler runs (plugin-registered handlers or custom handlers).
-5. Handler calls into service layer (`internal/admin/services` or plugin services) for business logic and DB interactions.
-6. Services interact with GORM (`internal/db/gorm.go`) and return results to the handler.
+5. Handler calls into plugin services or custom code for business logic, DB interactions, storage, or cache usage.
+6. Shared dependencies come from bootstrap: GORM (`internal/db/gorm.go`), storage (`internal/storage`), and optional KeyDB (`internal/keydb`).
 7. Handler serializes the response (JSON/HTML) and returns it to the client.
 8. Plugin hooks or response middleware may modify the response before it is sent.
 
@@ -724,7 +730,7 @@ Extension points & best practices
 - Add routes/handlers via plugins (recommended) or by modifying `internal/app/bootstrap.go`
 - Register middleware with explicit priority so execution order is predictable
 - Keep service layer decoupled from HTTP layer — services should accept `context.Context` and repository interfaces
-- Extend `AdminServices` by adding fields in `internal/admin/services/services.go` and initializing in `new_services.go`
+- Prefer plugin-local services initialized from `plugins.ServiceDeps` instead of extending core structs unless truly necessary
 
 **Database & transactions:**
 - Use `context.Context` to pass request identity and cancellation signals into services
@@ -733,7 +739,7 @@ Extension points & best practices
 
 **Testing:**
 - Mock DB and services for unit testing; see `internal/mail/mailer_test.go` for example patterns
-- Test plugins in isolation by providing mock `AdminServices` instances
+- Test plugins in isolation by providing test `*gorm.DB` and, when needed, a fake `storage.Store`
 - Use `go run ./cmd/console migrate --db <type> up` to run migrations in test databases
 
 **Security:**
@@ -753,6 +759,7 @@ Quick file references
 - DB (GORM): `internal/db/gorm.go`
 - DB transactions: `internal/db/tx.go`
 - Auth utilities (JWT): `internal/auth/jwt.go`
+- Storage: `internal/storage/config.go`
 - Console commands: `internal/console/`
 - Mailer: `internal/mail/mailer.go`
 - KeyDB client: `internal/keydb/client.go`

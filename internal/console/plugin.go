@@ -221,7 +221,6 @@ import (
 	"github.com/spf13/cobra"
 	"go_framework/internal/plugins"
 	pluginhandlers "go_framework/plugins/%s/handlers"
-		"gorm.io/gorm"
 )
 
 // Plugin %s provides a minimal scaffold.
@@ -232,16 +231,18 @@ func New() plugins.Plugin { return &Plugin{} }
 
 func (p *Plugin) ID() string { return "%s" }
 
-func (p *Plugin) RegisterServices(db *gorm.DB) error { return nil }
+func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { return nil }
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor { return nil }
 
-func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, db *gorm.DB) error {
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error {
 	admin.GET("/plugins/%s/health", pluginhandlers.HealthHandler)
-    return nil
+	_ = router
+	_ = api
+	return nil
 }
 
-func (p *Plugin) Seed(db *gorm.DB) error { return nil }
+func (p *Plugin) Seed() error { return nil }
 
 func (p *Plugin) ConsoleCommands() []*cobra.Command {
 %s}
@@ -272,7 +273,6 @@ import (
 	"github.com/spf13/cobra"
 	"go_framework/internal/plugins"
 	pluginhandlers "go_framework/plugins/%s/handlers"
-		"gorm.io/gorm"
 )
 
 // Plugin %s provides a CRUD sample scaffold.
@@ -282,18 +282,20 @@ func New() plugins.Plugin { return &Plugin{} }
 
 func (p *Plugin) ID() string { return "%s" }
 
-func (p *Plugin) RegisterServices(db *gorm.DB) error { return nil }
+func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { return nil }
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor { return nil }
 
-func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, db *gorm.DB) error {
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error {
 	admin.GET("/plugins/%s/items", pluginhandlers.ListItems)
 	admin.POST("/plugins/%s/items", pluginhandlers.CreateItem)
 	admin.GET("/plugins/%s/items/:id", pluginhandlers.GetItem)
+	_ = router
+	_ = api
 	return nil
 }
 
-func (p *Plugin) Seed(db *gorm.DB) error { return nil }
+func (p *Plugin) Seed() error { return nil }
 
 func (p *Plugin) ConsoleCommands() []*cobra.Command {
 %s}
@@ -324,7 +326,6 @@ import (
 	"github.com/spf13/cobra"
 	"go_framework/internal/plugins"
 	pluginmiddleware "go_framework/plugins/%s/middleware"
-		"gorm.io/gorm"
 )
 
 // Plugin %s provides a middleware-only sample scaffold.
@@ -334,7 +335,7 @@ func New() plugins.Plugin { return &Plugin{} }
 
 func (p *Plugin) ID() string { return "%s" }
 
-func (p *Plugin) RegisterServices(db *gorm.DB) error { return nil }
+func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { return nil }
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor {
     return []plugins.MiddlewareDescriptor{{
@@ -345,12 +346,14 @@ func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor {
     }}
 }
 
-func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup, db *gorm.DB) error {
-    // No routes by default; add as needed
-    return nil
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error {
+	// No routes by default; add as needed
+	_ = router
+	_ = api
+	return nil
 }
 
-func (p *Plugin) Seed(db *gorm.DB) error { return nil }
+func (p *Plugin) Seed() error { return nil }
 
 func (p *Plugin) ConsoleCommands() []*cobra.Command {
 %s}

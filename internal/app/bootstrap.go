@@ -21,6 +21,7 @@ import (
 	"go_framework/internal/keydb"
 	"go_framework/internal/pluginloader"
 	"go_framework/internal/plugins"
+	"go_framework/internal/storage"
 
 	"gorm.io/gorm"
 )
@@ -47,6 +48,7 @@ type App struct {
 	adminGroup *gin.RouterGroup
 	frontGroup *gin.RouterGroup
 	gdb        *gorm.DB
+	store      storage.Store
 }
 
 // New assembles the application: DB, services, routes, plugins, swagger.
@@ -54,6 +56,17 @@ func New(opts Options) (*App, error) {
 	gdb, err := db.GetGormDB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Initialize Storage service from env config
+	storageConfig, err := storage.LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load storage config: %w", err)
+	}
+
+	store, err := storage.NewStore(storageConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
 	// Initialize KeyDB for flash messages (non-fatal if unavailable)
@@ -187,6 +200,7 @@ func New(opts Options) (*App, error) {
 		adminGroup: admin,
 		frontGroup: apiGroup,
 		gdb:        gdb,
+		store:      store,
 	}
 
 	app.registerAdminRoutes()
@@ -209,6 +223,11 @@ func (a *App) Run() error {
 	return a.router.Run()
 }
 
+// GetStore mengembalikan Storage service instance
+func (a *App) GetStore() storage.Store {
+	return a.store
+}
+
 // attachPlugins registers core + user plugins, then attaches middleware and routes.
 func (a *App) attachPlugins(registerPlugins func()) error {
 	pluginloader.RegisterCorePlugins()
@@ -222,7 +241,11 @@ func (a *App) attachPlugins(registerPlugins func()) error {
 		"api":    a.frontGroup,
 	})
 
-	return plugins.RegisterAllRoutes(a.router, a.adminGroup, a.frontGroup, a.gdb)
+	if err := plugins.RegisterAllServices(a.gdb, a.store); err != nil {
+		return err
+	}
+
+	return plugins.RegisterAllRoutes(a.router, a.adminGroup, a.frontGroup, a.gdb, a.store)
 }
 
 // registerAdminRoutes wires all core admin endpoints.
@@ -236,6 +259,12 @@ func (a *App) registerStoreRoutes() {
 	a.router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "Hello World"})
 	})
+
+	// Serve static assets dari storage (jika local storage)
+	// Untuk production dengan S3, endpoint ini bisa di-skip atau redirect ke CDN
+	if localStore, ok := a.store.(*storage.LocalStore); ok {
+		a.router.Static("/assets", localStore.GetRoot())
+	}
 
 	// NOTE: assetlinks.json is served by the auth plugin to allow per-plugin
 	// control. Plugin `plugins/auth/plugin.go` registers the handler for

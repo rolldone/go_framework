@@ -8,6 +8,7 @@ import (
 
 	"go_framework/internal/db"
 	"go_framework/internal/plugins"
+	"go_framework/internal/storage"
 
 	"gorm.io/gorm"
 )
@@ -70,19 +71,35 @@ func runSQLSeed() error {
 }
 
 func runServiceSeed(gdb *gorm.DB) error {
-	return seedPlugins(gdb)
+	// Try to initialize storage; non-fatal for seeding
+	var store storage.Store
+	if cfg, err := storage.LoadConfig(); err == nil {
+		if s, err := storage.NewStore(cfg); err == nil {
+			store = s
+		} else {
+			fmt.Printf("[WARN] storage init failed, continuing without store: %v\n", err)
+		}
+	} else {
+		fmt.Printf("[WARN] storage config load failed, continuing without store: %v\n", err)
+	}
+	deps := plugins.ServiceDeps{DB: gdb, Store: store}
+	// ensure plugins can register services with deps
+	if err := plugins.RegisterAllServices(deps.DB, deps.Store); err != nil {
+		return err
+	}
+	return seedPlugins()
 }
 
-func seedPlugins(gdb *gorm.DB) error {
+func seedPlugins() error {
 	switch seedPlugin {
 	case "core":
 		return nil
 	case "all":
-		return plugins.SeedAll(gdb)
+		return plugins.SeedAll()
 	default:
 		for _, p := range plugins.RegisteredPlugins() {
 			if p.ID() == seedPlugin {
-				return p.Seed(gdb)
+				return p.Seed()
 			}
 		}
 		return fmt.Errorf("plugin %q is not registered", seedPlugin)
