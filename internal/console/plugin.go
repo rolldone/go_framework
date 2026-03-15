@@ -115,6 +115,11 @@ var pluginNewCmd = &cobra.Command{
 			return err
 		}
 
+		// example events file showing how to subscribe/publish internal events
+		if err := writeFileIfMissing(filepath.Join(base, "events.go"), pluginEventsTemplate(pkgName, id)); err != nil {
+			return err
+		}
+
 		fmt.Printf("plugin scaffold created at %s\n", base)
 		fmt.Printf("For server: register the plugin in `cmd/server/main.go` (use the RegisterPlugins hook)\n")
 		fmt.Printf("For console: register the plugin in `cmd/console/main.go` using `console.RegisterAdditionalPlugins([]plugins.Plugin{plugin.New()})`\n")
@@ -231,7 +236,7 @@ func New() plugins.Plugin { return &Plugin{} }
 
 func (p *Plugin) ID() string { return "%s" }
 
-func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { return nil }
+func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { _ = deps; registerEventHandlers(); return nil }
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor { return nil }
 
@@ -282,7 +287,7 @@ func New() plugins.Plugin { return &Plugin{} }
 
 func (p *Plugin) ID() string { return "%s" }
 
-func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { return nil }
+func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { _ = deps; registerEventHandlers(); return nil }
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor { return nil }
 
@@ -335,15 +340,15 @@ func New() plugins.Plugin { return &Plugin{} }
 
 func (p *Plugin) ID() string { return "%s" }
 
-func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { return nil }
+func (p *Plugin) RegisterServices(deps plugins.ServiceDeps) error { _ = deps; registerEventHandlers(); return nil }
 
 func (p *Plugin) RegisterMiddleware() []plugins.MiddlewareDescriptor {
-    return []plugins.MiddlewareDescriptor{{
-        Name:     "%s-sample-mw",
-        Target:   "admin",
-        Priority: 100,
+	return []plugins.MiddlewareDescriptor{{
+		Name:     "%s-sample-mw",
+		Target:   "admin",
+		Priority: 100,
 		Handler:  pluginmiddleware.SampleMiddleware,
-    }}
+	}}
 }
 
 func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error {
@@ -423,4 +428,27 @@ func SampleMiddleware(c *gin.Context) {
 	c.Next()
 }
 `, strings.ToUpper(strings.ReplaceAll(id, "-", "_")))
+}
+
+// pluginEventsTemplate returns a sample events.go that demonstrates subscribing to
+// and handling internal events. It's written into the generated plugin package.
+func pluginEventsTemplate(pkg, id string) string {
+	return fmt.Sprintf(`package %s
+
+import (
+	"context"
+	"log"
+
+	"go_framework/internal/events"
+)
+
+// registerEventHandlers registers example event handlers for the plugin.
+func registerEventHandlers() {
+	// subscribe to a sample event; handlers run asynchronously
+	events.Subscribe("user.created", func(ctx context.Context, payload interface{}) {
+		log.Printf("plugin %s: received user.created payload type=%T", "%s", payload)
+		_ = ctx
+	})
+}
+`, pkg, id)
 }

@@ -102,6 +102,26 @@ Main components
 - Events: `internal/events`
 - UUID v7 generator: `internal/uuid`
 
+Events
+------
+A lightweight internal event bus is provided by `internal/events`. Handlers are invoked asynchronously in separate goroutines by default. Use `Subscribe` to register a handler (it returns an unsubscribe function) and `Publish` to emit events.
+
+Example:
+
+```go
+// subscribe to an event
+unsub := events.Subscribe("user.created", func(ctx context.Context, payload interface{}) {
+   // handle event (payload can be any value)
+   // run quick background work or forward to worker queues
+})
+defer unsub()
+
+// publish an event (delivered asynchronously to subscribers)
+events.Publish("user.created", map[string]interface{}{"id": "user123"})
+```
+
+See `internal/events/events_example_test.go` for a runnable test demonstrating Subscribe/Publish.
+
 Environment variables
 ---------------------
 Configuration is read from environment variables. Use `./.env.example` as a starting point.
