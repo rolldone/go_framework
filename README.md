@@ -122,6 +122,54 @@ events.Publish("user.created", map[string]interface{}{"id": "user123"})
 
 See `internal/events/events_example_test.go` for a runnable test demonstrating Subscribe/Publish.
 
+Request–Reply (safe pattern)
+---------------------------
+For synchronous data-sync between plugins the repo provides a helper `RequestReply` in `internal/events`.
+It creates a unique reply topic for each request, publishes the request with a `ReplyTo` field, and waits (with timeout) for a single reply.
+
+Key properties:
+- Uses a per-request reply topic (no shared global reply channel) to avoid cross-talk.
+- Caller supplies a timeout and context for cancellation.
+- Subscribers must read `ReplyTo` from the request and publish their response to that topic.
+
+See `internal/events/request_reply.go` and `internal/events/request_reply_test.go` for a concrete example with concurrent requesters.
+
+Cancellation / Deadline pattern
+-------------------------------
+When requesters use different timeouts, handlers may finish after some callers already timed out. To avoid leaking or processing stale replies:
+
+- Include a deadline or cancel field in the request payload (e.g. `Deadline` as a Unix nano timestamp) because `Publish` invokes handlers with a background context.
+- Subscribers should check the deadline before doing expensive work and before publishing a reply; if the deadline passed, skip replying.
+- Always publish replies to the specific `ReplyTo` topic provided in the request so replies don't reach other requesters.
+
+Example (publisher):
+
+```go
+deadline := time.Now().Add(2 * time.Second).UnixNano()
+req := map[string]interface{}{ "id": "42", "Deadline": deadline }
+resp, err := events.RequestReply(ctx, "user.query", req, 2*time.Second)
+```
+
+Example (subscriber):
+
+```go
+events.Subscribe("user.query", func(ctx context.Context, payload interface{}) {
+   m, _ := payload.(map[string]interface{})
+   // read deadline (type assertions may vary)
+   if d, ok := m["Deadline"].(int64); ok {
+      if time.Now().UnixNano() > d {
+         // too late, skip
+         return
+      }
+   }
+   replyTo, _ := m["ReplyTo"].(string)
+   // do work and publish to replyTo
+   events.Publish(replyTo, map[string]interface{}{"ok": true})
+})
+```
+
+This pattern keeps reply scopes isolated and makes late replies harmless (they're ignored by the requester). If you need true cancellation of work, consider changing the publish API to forward a cancellable context or use a direct service call.
+
 Environment variables
 ---------------------
 Configuration is read from environment variables. Use `./.env.example` as a starting point.
