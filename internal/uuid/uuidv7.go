@@ -36,3 +36,9 @@ func New() (string, error) {
 	return fmt.Sprintf("%s-%s-%s-%s-%s",
 		string(hexs[0:8]), string(hexs[8:12]), string(hexs[12:16]), string(hexs[16:20]), string(hexs[20:32])), nil
 }
+
+// NewString returns a UUIDv7 string and ignores the error (keeps legacy callsites simple).
+func NewString() string {
+	s, _ := New()
+	return s
+}

@@ -222,6 +222,36 @@ Storage
 - `STORAGE_PUBLIC_URL`=http://localhost:8080/assets
 - `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` — used when `STORAGE_DRIVER=s3`
 
+Creating the public storage URL
+-------------------------------
+When serving files (images, product assets, business assets) the application exposes public URLs that point to the storage location. Configure `STORAGE_PUBLIC_URL` so generated links (e.g. in APIs and emails) resolve correctly.
+
+Guidelines:
+- Local storage: when `STORAGE_DRIVER=local` and the app serves `/assets` (see plugin `catalog` which registers static routes), set `STORAGE_PUBLIC_URL` to your server base + `/assets`, e.g. `http://localhost:8080/assets` or `https://example.com/assets`.
+- S3 (or other object storage): set `STORAGE_PUBLIC_URL` to the public bucket endpoint or CDN fronting the bucket, e.g. `https://my-bucket.s3.eu-west-1.amazonaws.com` or `https://cdn.example.com`.
+- Trailing slash: avoid a trailing slash to keep URL joins predictable (the code appends paths like `/products/...`).
+
+Examples:
+- Local development (app serves `/assets`):
+
+   STORAGE_DRIVER=local
+   STORAGE_ROOT=./storage
+   STORAGE_PUBLIC_URL=http://localhost:8080/assets
+
+- S3 with CDN (recommended for production):
+
+   STORAGE_DRIVER=s3
+   S3_BUCKET=my-bucket
+   S3_REGION=eu-west-1
+   S3_ENDPOINT=
+   STORAGE_PUBLIC_URL=https://cdn.example.com
+
+Deployment tips:
+- If you front storage with Nginx or a CDN, point `STORAGE_PUBLIC_URL` to the public host and configure the reverse proxy to serve the files from the application or the object store.
+- Make sure CORS and caching headers are configured correctly on the public host or CDN to allow your frontend origins to request assets.
+- When using local storage in production, prefer a CDN or public bucket for scalability and to offload traffic from the app server.
+
+
 CORS
 - `CORS_ALLOWED_ORIGINS`="http://localhost:5173,http://localhost:4321" — comma-separated list of allowed origins
 
@@ -736,6 +766,27 @@ func (p *MyPlugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, ap
    _ = api
    return nil
 }
+```
+
+Serving local storage from a plugin
+----------------------------------
+If you want a plugin to register static routes that serve files from the local storage root (same approach used in `plugins/catalog`), add the following check inside `RegisterRoutes`. It uses the `Store` instance provided in `RegisterServices` and only registers the routes when the store is a `*storage.LocalStore`:
+
+```go
+func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api *gin.RouterGroup) error {
+   if p.service == nil {
+      return fmt.Errorf("myplugin: service not registered")
+   }
+
+   // Jika storage lokal aktif, daftarkan static routes mirip catalog
+   if localStore, ok := p.service.Store.(*storage.LocalStore); ok {
+      router.Static("/assets/products", localStore.GetRoot()+"/products")
+      router.Static("/assets/businesses", localStore.GetRoot()+"/businesses")
+   }
+}
+```
+
+Place this code in your plugin's `RegisterRoutes` so the application serves `/assets/*` paths from the configured `STORAGE_ROOT` when using local storage. This keeps the behavior identical to the catalog plugin and avoids touching core bootstrap code.
 
 func (p *MyPlugin) Seed() error { return nil }
 

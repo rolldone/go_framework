@@ -445,10 +445,10 @@ import (
 // registerEventHandlers registers example event handlers for the plugin.
 func registerEventHandlers() {
 	// subscribe to a sample event; handlers run asynchronously
-	events.Subscribe("user.created", func(ctx context.Context, payload interface{}) {
-		log.Printf("plugin %s: received user.created payload type=%T", "%s", payload)
-		_ = ctx
-	})
+		events.Subscribe("user.created", func(ctx context.Context, payload interface{}) {
+			log.Printf("plugin %s: received user.created payload type=%%T", payload)
+			_ = ctx
+		})
 }
 `, pkg, id)
 }

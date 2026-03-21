@@ -250,7 +250,7 @@ func (a *App) attachPlugins(registerPlugins func()) error {
 
 // registerAdminRoutes wires all core admin endpoints.
 func (a *App) registerAdminRoutes() {
-
+	// Admin routes are registered by plugins (e.g. plugins/order)
 }
 
 // registerStoreRoutes wires all core store/public endpoints.
@@ -260,11 +260,7 @@ func (a *App) registerStoreRoutes() {
 		c.JSON(http.StatusOK, gin.H{"message": "Hello World"})
 	})
 
-	// Serve static assets dari storage (jika local storage)
-	// Untuk production dengan S3, endpoint ini bisa di-skip atau redirect ke CDN
-	if localStore, ok := a.store.(*storage.LocalStore); ok {
-		a.router.Static("/assets", localStore.GetRoot())
-	}
+	// Static assets serving moved into plugins (catalog plugin).
 
 	// NOTE: assetlinks.json is served by the auth plugin to allow per-plugin
 	// control. Plugin `plugins/auth/plugin.go` registers the handler for
