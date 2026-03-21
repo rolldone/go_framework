@@ -790,6 +790,7 @@ func (p *Plugin) RegisterRoutes(router *gin.Engine, admin *gin.RouterGroup, api 
 
 Place this code in your plugin's `RegisterRoutes` so the application serves `/assets/*` paths from the configured `STORAGE_ROOT` when using local storage. This keeps the behavior identical to the catalog plugin and avoids touching core bootstrap code.
 
+```
 func (p *MyPlugin) Seed() error { return nil }
 
 func (p *MyPlugin) ConsoleCommands() []*cobra.Command { return nil }
