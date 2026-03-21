@@ -237,6 +237,8 @@ Examples:
    STORAGE_DRIVER=local
    STORAGE_ROOT=./storage
    STORAGE_PUBLIC_URL=http://localhost:8080/assets
+   
+   See the example snippet in this document: [Serving local storage from a plugin](doc_framework.md#serving-local-storage-from-a-plugin)
 
 - S3 with CDN (recommended for production):
 
