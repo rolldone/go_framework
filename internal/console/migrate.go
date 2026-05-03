@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
@@ -63,11 +65,9 @@ var migrateMakeCmd = &cobra.Command{
 		if err := os.MkdirAll(t.Path, 0o755); err != nil {
 			return err
 		}
-		nextNum, err := nextMigrationNumber(t.Path)
-		if err != nil {
-			return err
-		}
-		base := fmt.Sprintf("%06d_%s", nextNum, name)
+		// Use UTC timestamp prefix like Laravel (YYYY_MM_DD_HHMMSS)
+		now := time.Now().UTC().Format("2006_01_02_150405")
+		base := fmt.Sprintf("%s_%s", now, name)
 		upPath := filepath.Join(t.Path, base+".up.sql")
 		downPath := filepath.Join(t.Path, base+".down.sql")
 		if err := os.WriteFile(upPath, []byte("-- write your UP migration here\n"), 0o644); err != nil {
@@ -106,6 +106,16 @@ var migrateDownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if migratePluginFlag == "all" || migratePluginFlag == "" {
+			ok, err := applyDownGlobal(targets)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Println("all: nothing to rollback")
+			}
+			return nil
+		}
 		for i := len(targets) - 1; i >= 0; i-- {
 			if err := applyDown(targets[i]); err != nil {
 				return fmt.Errorf("%s: %w", targets[i].Name, err)
@@ -122,6 +132,9 @@ var migrateDownAllCmd = &cobra.Command{
 		targets, err := collectTargets(migratePluginFlag, migrateDBFlag)
 		if err != nil {
 			return err
+		}
+		if migratePluginFlag == "all" || migratePluginFlag == "" {
+			return applyDownAllGlobal(targets)
 		}
 		for i := len(targets) - 1; i >= 0; i-- {
 			if err := applyDownAll(targets[i]); err != nil {
@@ -163,9 +176,23 @@ var migrateListCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("%s: %w", t.Name, err)
 			}
+			// Determine applied migration names to compute pending
+			rows, err := dbConn.Raw(`SELECT name FROM migrations WHERE target = ? ORDER BY version ASC`, t.Name).Rows()
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			applied := map[string]bool{}
+			for rows.Next() {
+				var nm string
+				if err := rows.Scan(&nm); err != nil {
+					return err
+				}
+				applied[nm] = true
+			}
 			pending := 0
 			for _, f := range files {
-				if f.Number > current {
+				if !applied[f.Name] {
 					pending++
 				}
 			}
@@ -241,7 +268,168 @@ func collectTargets(target, dbType string) ([]migrationTarget, error) {
 		}
 		return nil, fmt.Errorf("no migration paths found for target %q", target)
 	}
+	ordered, err := orderTargetsDynamically(res)
+	if err != nil {
+		return nil, err
+	}
+	res = ordered
 	return res, nil
+}
+
+func orderTargetsDynamically(targets []migrationTarget) ([]migrationTarget, error) {
+	if len(targets) <= 1 {
+		return targets, nil
+	}
+
+	// Keep core first if present; plugin order is resolved dynamically.
+	var coreTargets []migrationTarget
+	var pluginTargets []migrationTarget
+	for _, t := range targets {
+		if t.Name == "core" {
+			coreTargets = append(coreTargets, t)
+			continue
+		}
+		pluginTargets = append(pluginTargets, t)
+	}
+	if len(pluginTargets) <= 1 {
+		return append(coreTargets, pluginTargets...), nil
+	}
+
+	pluginOrder := map[string]int{}
+	for idx, p := range plugins.RegisteredPlugins() {
+		pluginOrder[p.ID()] = idx
+	}
+
+	owners, err := collectTableOwners(pluginTargets)
+	if err != nil {
+		return nil, err
+	}
+	deps, err := collectTargetDependencies(pluginTargets, owners)
+	if err != nil {
+		return nil, err
+	}
+
+	nameToTarget := map[string]migrationTarget{}
+	indegree := map[string]int{}
+	dependents := map[string][]string{}
+	for _, t := range pluginTargets {
+		nameToTarget[t.Name] = t
+		indegree[t.Name] = len(deps[t.Name])
+	}
+	for tgt, need := range deps {
+		for dep := range need {
+			dependents[dep] = append(dependents[dep], tgt)
+		}
+	}
+
+	var queue []string
+	for _, t := range pluginTargets {
+		if indegree[t.Name] == 0 {
+			queue = append(queue, t.Name)
+		}
+	}
+	sort.Slice(queue, func(i, j int) bool { return lessByRegistration(queue[i], queue[j], pluginOrder) })
+
+	var orderedPlugins []migrationTarget
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		orderedPlugins = append(orderedPlugins, nameToTarget[cur])
+
+		for _, nxt := range dependents[cur] {
+			indegree[nxt]--
+			if indegree[nxt] == 0 {
+				queue = append(queue, nxt)
+			}
+		}
+		sort.Slice(queue, func(i, j int) bool { return lessByRegistration(queue[i], queue[j], pluginOrder) })
+	}
+
+	if len(orderedPlugins) != len(pluginTargets) {
+		var unresolved []string
+		for name, d := range indegree {
+			if d > 0 {
+				unresolved = append(unresolved, name)
+			}
+		}
+		sort.Strings(unresolved)
+		return nil, fmt.Errorf("cannot resolve plugin migration order (cyclic dependencies): %s", strings.Join(unresolved, ", "))
+	}
+
+	return append(coreTargets, orderedPlugins...), nil
+}
+
+func lessByRegistration(a, b string, pluginOrder map[string]int) bool {
+	ai, aok := pluginOrder[a]
+	bi, bok := pluginOrder[b]
+	if aok && bok && ai != bi {
+		return ai < bi
+	}
+	if aok != bok {
+		return aok
+	}
+	return a < b
+}
+
+var (
+	createTableRegexp = regexp.MustCompile(`(?i)create\s+table(?:\s+if\s+not\s+exists)?\s+([a-zA-Z_][a-zA-Z0-9_]*)`)
+	referenceRegexp   = regexp.MustCompile(`(?i)references\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(`)
+)
+
+func collectTableOwners(targets []migrationTarget) (map[string]string, error) {
+	owners := map[string]string{}
+	for _, t := range targets {
+		files, err := listMigrationFiles(t.Path)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			content, err := os.ReadFile(f.UpPath)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range createTableRegexp.FindAllStringSubmatch(string(content), -1) {
+				if len(m) < 2 {
+					continue
+				}
+				tbl := strings.ToLower(m[1])
+				if owner, exists := owners[tbl]; exists && owner != t.Name {
+					return nil, fmt.Errorf("table %q defined by multiple plugins: %s and %s", tbl, owner, t.Name)
+				}
+				owners[tbl] = t.Name
+			}
+		}
+	}
+	return owners, nil
+}
+
+func collectTargetDependencies(targets []migrationTarget, owners map[string]string) (map[string]map[string]struct{}, error) {
+	deps := map[string]map[string]struct{}{}
+	for _, t := range targets {
+		deps[t.Name] = map[string]struct{}{}
+		files, err := listMigrationFiles(t.Path)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			content, err := os.ReadFile(f.UpPath)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range referenceRegexp.FindAllStringSubmatch(string(content), -1) {
+				if len(m) < 2 {
+					continue
+				}
+				refTbl := strings.ToLower(m[1])
+				owner, ok := owners[refTbl]
+				if !ok || owner == t.Name {
+					continue
+				}
+				deps[t.Name][owner] = struct{}{}
+			}
+		}
+	}
+	return deps, nil
 }
 
 func applyUp(t migrationTarget) error {
@@ -270,8 +458,23 @@ func applyUp(t migrationTarget) error {
 	if err != nil {
 		return err
 	}
+	// build set of already applied migration names
+	rows, err := dbConn.Raw(`SELECT name FROM migrations WHERE target = ? ORDER BY version ASC`, t.Name).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	applied := map[string]bool{}
+	for rows.Next() {
+		var nm string
+		if err := rows.Scan(&nm); err != nil {
+			return err
+		}
+		applied[nm] = true
+	}
+
 	for _, f := range files {
-		if f.Number <= current {
+		if applied[f.Name] {
 			continue
 		}
 		if err := setTargetDirty(dbConn, t.Name, true); err != nil {
@@ -281,13 +484,14 @@ func applyUp(t migrationTarget) error {
 			_ = setTargetDirty(dbConn, t.Name, true)
 			return fmt.Errorf("failed applying %s: %w", filepath.Base(f.UpPath), err)
 		}
-		if err := insertMigrationRecord(dbConn, t.Name, f.Number, f.Name); err != nil {
+		nextVersion := current + 1
+		if err := insertMigrationRecord(dbConn, t.Name, nextVersion, f.Name); err != nil {
 			return err
 		}
 		if err := setTargetDirty(dbConn, t.Name, false); err != nil {
 			return err
 		}
-		current = f.Number
+		current = nextVersion
 		fmt.Printf("%s applied %s\n", t.Name, filepath.Base(f.UpPath))
 	}
 	return nil
@@ -325,13 +529,13 @@ func applyDown(t migrationTarget) error {
 	}
 	var targetFile *migrationFile
 	for _, f := range files {
-		if f.Number == rec.Version {
+		if f.Name == rec.Name {
 			targetFile = &f
 			break
 		}
 	}
 	if targetFile == nil {
-		return fmt.Errorf("down file not found for version %d; restore the missing migration or run repair", rec.Version)
+		return fmt.Errorf("down file not found for migration %q; restore the missing migration or run repair", rec.Name)
 	}
 	if err := setTargetDirty(dbConn, t.Name, true); err != nil {
 		return err
@@ -385,6 +589,67 @@ func applyDownAll(t migrationTarget) error {
 	return nil
 }
 
+func applyDownGlobal(targets []migrationTarget) (bool, error) {
+	if len(targets) == 0 {
+		return false, nil
+	}
+	targetNames := make([]string, 0, len(targets))
+	byName := make(map[string]migrationTarget, len(targets))
+	for _, t := range targets {
+		targetNames = append(targetNames, t.Name)
+		byName[t.Name] = t
+	}
+
+	dbConn, err := db.GetGormDB()
+	if err != nil {
+		return false, err
+	}
+	if err := ensureMigrationTables(dbConn); err != nil {
+		return false, err
+	}
+
+	type latestRow struct {
+		Target string
+	}
+	var latest latestRow
+	err = dbConn.Raw(`
+		SELECT target
+		FROM migrations
+		WHERE target IN ?
+		ORDER BY applied_at DESC, id DESC
+		LIMIT 1
+	`, targetNames).Scan(&latest).Error
+	if err != nil {
+		return false, err
+	}
+	if latest.Target == "" {
+		return false, nil
+	}
+
+	t, ok := byName[latest.Target]
+	if !ok {
+		return false, fmt.Errorf("migration target %q not found", latest.Target)
+	}
+	if err := applyDown(t); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func applyDownAllGlobal(targets []migrationTarget) error {
+	for {
+		rolled, err := applyDownGlobal(targets)
+		if err != nil {
+			return err
+		}
+		if !rolled {
+			break
+		}
+	}
+	fmt.Println("all: rollback complete")
+	return nil
+}
+
 type migrationFile struct {
 	Number   int
 	Name     string
@@ -392,7 +657,7 @@ type migrationFile struct {
 	DownPath string
 }
 
-var migNumRegexp = regexp.MustCompile(`^(\d+)_.*\.up\.sql$`)
+var migNumRegexp = regexp.MustCompile(`^([0-9_]+)_.*\.up\.sql$`)
 
 func listMigrationFiles(path string) ([]migrationFile, error) {
 	entries, err := os.ReadDir(path)
@@ -411,8 +676,10 @@ func listMigrationFiles(path string) ([]migrationFile, error) {
 		if len(matches) != 2 {
 			continue
 		}
-		var n int
-		_, _ = fmt.Sscanf(matches[1], "%d", &n)
+		// matches[1] may contain underscores for timestamped names (YYYY_MM_DD_HHMMSS)
+		digits := strings.ReplaceAll(matches[1], "_", "")
+		n64, _ := strconv.ParseInt(digits, 10, 64)
+		n := int(n64)
 		base := strings.TrimSuffix(e.Name(), ".up.sql")
 		upPath := filepath.Join(path, e.Name())
 		downPath := filepath.Join(path, base+".down.sql")

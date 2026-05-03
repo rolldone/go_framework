@@ -61,6 +61,8 @@ go run ./cmd/server
 go run ./cmd/console plugin new --id my-plugin
 ```
 
+The plugin generator creates an initial migration with a timestamp prefix, in the same style as Laravel: `YYYY_MM_DD_HHMMSS_name.up.sql` and `YYYY_MM_DD_HHMMSS_name.down.sql`.
+
 See sections below for more details.
 
 What's included
@@ -516,6 +518,7 @@ Common commands (run from repo root):
 
 ```bash
 # create a new migration pair (up/down) for core (or use --plugin <id>)
+# files are timestamped automatically, e.g. 2026_05_03_150401_add_users_table.up.sql
 go run ./cmd/console migrate make add_users_table
 
 # apply pending migrations (core then plugins)
@@ -539,6 +542,7 @@ go run ./cmd/console migrate --db mysql up
 
 Notes:
 - The migrate commands track state in DB tables `migrations` and `migration_targets` created automatically on first run.
+- Migration files use a Laravel-style UTC timestamp prefix to keep ordering deterministic across plugins and environments.
 - If a target is reported as `dirty`, the CLI will refuse to continue; inspect the DB and migration files to resolve the issue (restore missing migration files or fix the database records), then clear `dirty` in `migration_targets`.
 - For production, prefer writing explicit SQL migration files and testing rollbacks on staging before applying to production.
 

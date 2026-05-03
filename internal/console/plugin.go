@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/cobra"
@@ -108,10 +109,13 @@ var pluginNewCmd = &cobra.Command{
 		if err := writeFileIfMissing(filepath.Join(base, "plugin.go"), pluginContent); err != nil {
 			return err
 		}
-		if err := writeFileIfMissing(filepath.Join(base, "migrations", "postgres", "000001_init.up.sql"), "-- write your UP migration here\n"); err != nil {
+		// create initial migration with timestamp prefix
+		ts := time.Now().UTC().Format("2006_01_02_150405")
+		baseMig := fmt.Sprintf("%s_init", ts)
+		if err := writeFileIfMissing(filepath.Join(base, "migrations", "postgres", baseMig+".up.sql"), "-- write your UP migration here\n"); err != nil {
 			return err
 		}
-		if err := writeFileIfMissing(filepath.Join(base, "migrations", "postgres", "000001_init.down.sql"), "-- write your DOWN migration here\n"); err != nil {
+		if err := writeFileIfMissing(filepath.Join(base, "migrations", "postgres", baseMig+".down.sql"), "-- write your DOWN migration here\n"); err != nil {
 			return err
 		}
 
